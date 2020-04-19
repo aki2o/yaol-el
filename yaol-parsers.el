@@ -25,7 +25,6 @@
 ;;; Code:
 (require 'yaol)
 (require 'dash)
-(require 's)
 (require 'cl-lib)
 
 ;;;###autoload
