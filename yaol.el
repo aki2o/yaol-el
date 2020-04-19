@@ -6,7 +6,7 @@
 ;; Version: 0.0.1
 ;; Keywords: folding
 ;; URL: https://github.com/aki2o/yaol-el
-;; Package-Requires: ((s "1.9.0") (dash "2.5.0") (emacs "24") (cl-lib "0.5") (log4e "0.3.2"))
+;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.3.2"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -25,7 +25,6 @@
 
 ;;; Code:
 (require 'dash)
-(require 's)
 (require 'cl-lib)
 (require 'log4e)
 
@@ -56,14 +55,18 @@
   :group 'yaol)
 
 (defcustom yaol-popular-head-regexp-alist
-  `((go-mode . ,(rx bos (* space) (or "func") space))
-    (ruby-mode . ,(rx bos (* space) (or "class" "module" "def") space)))
+  `((perl-mode  . yaol-perl-mode-popular-head-regexp)
+    (cperl-mode . yaol-perl-mode-popular-head-regexp)
+    (go-mode    . ,(rx bos (* space) (or "func" "type") space))
+    (ruby-mode  . yaol-ruby-mode-popular-head-regexp))
   ""
   :type '(list (cons symbol function))
   :group 'yaol)
 
 (defcustom yaol-popular-level-alist
-  '((ruby-mode . 1))
+  '((ruby-mode             . 1)
+    (emacs-lisp-mode       . 0)
+    (lisp-interaction-mode . 0))
   ""
   :type '(list (cons symbol (choice integer function)))
   :group 'yaol)
@@ -89,15 +92,6 @@
   :type 'string
   :group 'yaol)
 
-(defface yaol-fold-header-face
-  `((t (:box (:line-width 1 :color ,(face-attribute 'highlight :background))
-             :background ,(face-attribute 'highlight :background))))
-  "Face used to display fold headers.")
-
-(defface yaol-fold-fringe-face
-  '((t ()))
-  "Face used to display fringe contents.")
-
 (defface yaol-fold-replacement-face
   '((t :inherit 'font-lock-comment-face))
   "Face used to display the fold replacement text.")
@@ -110,6 +104,23 @@
                                                   (debug . "debug")
                                                   (trace . "trace")))
 (yaol--log-set-level 'trace)
+
+(defvar yaol-perl-mode-popular-head-regexp
+  (rx bos (* space) (or "sub" "struct") space))
+
+(defvar yaol-ruby-mode-popular-head-regexp
+  (rx bos (* space)
+      (or (or "class" "module" "def"
+              "resources" "resource" "scope" "namespace")
+          (and (? "RSpec.") (or "describe" "context" "shared_examples_for" "shared_context"))
+          (and (+ (any "a-zA-Z0-9:")) ".routes.draw"))
+      space))
+
+(defun yaol-popular-head-regexp ()
+  (let ((value (assoc-default major-mode yaol-popular-head-regexp-alist)))
+    (cond ((functionp value) (funcall value))
+          ((symbolp value)   (eval value))
+          (t                 value))))
 
 
 ;;;;;;;;;;
@@ -148,6 +159,18 @@
       (setq level (1+ level))
       (setq node (yaol-node-parent node)))
     level))
+
+(defsubst yaol-node-on? (node point)
+  (and (>= point (yaol-node-beg node)) (< point (yaol-node-end node))))
+
+(defsubst yaol-node-head-on? (node point)
+  (and (>= point (yaol-node-beg node)) (< point (yaol-node-fold-beg node))))
+
+(defsubst yaol-node-body-on? (node point)
+  (and (>= point (yaol-node-fold-beg node)) (< point (yaol-node-fold-end node))))
+
+(defsubst yaol-node-tail-on? (node point)
+  (and (>= point (yaol-node-fold-end node)) (< point (yaol-node-end node))))
 
 
 ;;;;;;;;;;;;;;;;;;
@@ -219,7 +242,11 @@
 
 (defun yaol-remove-non-program-position (positions)
   (cl-remove-if (lambda (pos)
-                  (yaol-has-any-face-position? pos '(font-lock-doc-face font-lock-comment-face font-lock-string-face)))
+                  (yaol-has-any-face-position? pos '(font-lock-doc-face
+                                                     font-lock-comment-face
+                                                     font-lock-string-face
+                                                     font-lock-variable-name-face
+                                                     font-lock-constant-face)))
                 positions))
 
 ;; Helper to expand head range back to beginning of expression.
@@ -333,8 +360,11 @@
             (> fold-beg fold-end)
             (> fold-end end))
     (error "Invalid range of the node: beg=%s end=%s fold-beg=%s fold-end=%s" beg end fold-beg fold-end))
+  (when (= (char-after end) ?\n)
+    (yaol--trace* "include linefeed after end.")
+    (setq end (1+ end)))
   (let ((node (vector beg end fold-beg fold-end nil nil))
-        (regexp (assoc-default major-mode yaol-popular-head-regexp-alist)))
+        (regexp (yaol-popular-head-regexp)))
     (when (or (not (functionp yaol-fold-validate-function))
               (funcall yaol-fold-validate-function node)
               (and regexp (string-match regexp (buffer-substring-no-properties beg fold-beg))))
@@ -347,54 +377,6 @@
     (yaol-set-node-children node (yaol-sort-nodes-recursively (remove nil children)))
     (yaol--trace* "created root node.")
     node))
-
-
-;;;;;;;;;;;;;;;;;
-;; Buffer Node
-
-(defvar yaol-root-node nil)
-(make-variable-buffer-local 'yaol-root-node)
-(defvar yaol-modified-tick 0)
-(make-variable-buffer-local 'yaol-modified-tick)
-(defvar yaol-parser nil)
-(make-variable-buffer-local 'yaol-parser)
-
-(defun yaol-rebuild-required? (buffer)
-  (or (not (buffer-local-value 'yaol-root-node buffer))
-      (not (= (buffer-modified-tick buffer) (buffer-local-value 'yaol-modified-tick buffer)))))
-
-(defun yaol-build-root-node (buffer)
-  (yaol--info* "start build root node. buffer[%s]" buffer)
-  (with-current-buffer buffer
-    (let* ((parser (or (assoc-default (buffer-local-value 'major-mode buffer) yaol-parser-alist)
-                       (buffer-local-value 'yaol-parser buffer)
-                       (error "Not found parser for %s" (buffer-name buffer))))
-           (nodes (save-excursion
-                    (funcall parser))))
-      (setq yaol-root-node (yaol-new-root-node nodes))
-      (setq yaol-modified-tick (buffer-modified-tick)))))
-
-(cl-defun yaol-get-root-node (&optional (buffer (current-buffer)))
-  (when (yaol-rebuild-required? buffer)
-    (yaol-build-root-node buffer))
-  (buffer-local-value 'yaol-root-node buffer))
-
-(cl-defun yaol-find-deepest-nodes-at (beg end &optional node-or-buffer)
-  (let* ((node (cond ((not node-or-buffer)     (yaol-get-root-node))
-                     ((bufferp node-or-buffer) (yaol-get-root-node node-or-buffer))
-                     (t                        node-or-buffer)))
-         (covered? (lambda (x)
-                     (and (>= beg (yaol-node-beg x))
-                          (<= end (yaol-node-end x)))))
-         (children (remove nil (cl-loop for c in (-filter covered? (yaol-node-children node))
-                                        append (yaol-find-deepest-nodes-at beg end c)))))
-    (cond (children
-           (let ((max-level (-max (-map 'yaol-node-level children))))
-             (-filter (lambda (x)
-                        (= (yaol-node-level x) max-level))
-                      children)))
-          ((funcall covered? node)
-           node))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;
@@ -466,7 +448,7 @@
 (cl-defun yaol-create-overlay (beg end &key replacement linefeed)
   (yaol--info* "start create overlay. beg[%s] end[%s] replacement[%s] linefeed[%s]" beg end replacement linefeed)
   (when (and linefeed (= (char-before end) ?\n))
-    (yaol--trace* "exclude linefeed from overlay.")
+    (yaol--trace* "exclude linefeed before end from overlay.")
     (setq end (1- end)))
   (when (and (< beg end)
              (string-match (rx (not (any blank "\n"))) (buffer-substring-no-properties beg end)))
@@ -499,31 +481,104 @@
   (overlay-put ov 'invisible (if hide-p 'yaol nil)))
 
 
+;;;;;;;;;;;;;;;;;
+;; Buffer Node
+
+(defvar yaol-root-node nil)
+(make-variable-buffer-local 'yaol-root-node)
+(defvar yaol-modified-tick 0)
+(make-variable-buffer-local 'yaol-modified-tick)
+(defvar yaol-parser nil)
+(make-variable-buffer-local 'yaol-parser)
+
+(defun yaol-rebuild-required? (buffer)
+  (or (not (buffer-local-value 'yaol-root-node buffer))
+      (not (= (buffer-modified-tick buffer) (buffer-local-value 'yaol-modified-tick buffer)))))
+
+(defun yaol-build-root-node (buffer)
+  (yaol--info* "start build root node. buffer[%s]" buffer)
+  (with-current-buffer buffer
+    (let* ((parser (or (assoc-default (buffer-local-value 'major-mode buffer) yaol-parser-alist)
+                       (buffer-local-value 'yaol-parser buffer)
+                       (error "Not found parser for %s" (buffer-name buffer))))
+           (nodes (save-excursion
+                    (funcall parser))))
+      (setq yaol-root-node (yaol-new-root-node nodes))
+      (setq yaol-modified-tick (buffer-modified-tick)))))
+
+(cl-defun yaol-get-root-node (&optional (buffer (current-buffer)))
+  (when (yaol-rebuild-required? buffer)
+    (yaol-build-root-node buffer))
+  (buffer-local-value 'yaol-root-node buffer))
+
+(cl-defun yaol-find-deepest-nodes-at (point &optional include-hidden node-or-buffer)
+  (let* ((node (cond ((not node-or-buffer)     (yaol-get-root-node))
+                     ((bufferp node-or-buffer) (yaol-get-root-node node-or-buffer))
+                     (t                        node-or-buffer)))
+         (children (remove nil (cl-loop for child in (-filter (lambda (n) (yaol-node-on? n point))
+                                                              (yaol-node-children node))
+                                        append (yaol-find-deepest-nodes-at point include-hidden child))))
+         (get-level (lambda (n)
+                      (if (yaol-node-body-on? n point)
+                          (1+ (yaol-node-level n))
+                        (yaol-node-level n)))))
+    (cond (children
+           (let ((max-level (-max (-map get-level children))))
+             (->> children
+                  (-filter (lambda (n) (= (funcall get-level n) max-level)))
+                  yaol-sort-nodes)))
+          ((and (yaol-node-on? node point)
+                (or include-hidden
+                    (not (yaol-folded-at? (yaol-node-beg node)))))
+           (list node)))))
+
+(cl-defun yaol-find-nodes-from (node pred &key include-hidden (include-sibling t) (include-child t) (method '-find))
+  (let* ((filter (lambda (n)
+                   (and (funcall pred n)
+                        (or include-hidden
+                            (not (yaol-folded-at? (yaol-node-beg n)))))))
+         (parent (yaol-node-parent node))
+         (sibling (when (and parent include-sibling)
+                    (funcall method filter (yaol-node-children parent))))
+         (child (when include-child
+                  (funcall method filter (yaol-node-children node)))))
+    (remove nil (list sibling child))))
+
+
 ;;;;;;;;;;;;;;;;;;
 ;; User Command
 
-(defun yaol-fold-clear ()
+;;;###autoload
+(defun yaol-fold-clear-all ()
   (interactive)
   (yaol-show-region (point-min) (point-max)))
 
-(defun yaol-fold-all-head ()
+;;;###autoload
+(defun yaol-fold-clear-current ()
+  (interactive)
+  (let ((nodes (yaol-find-deepest-nodes-at (point))))
+    (dolist (node nodes)
+      (yaol-show-region (yaol-node-beg node) (yaol-node-end node)))))
+
+;;;###autoload
+(defun yaol-fold-in-all-heads ()
   (interactive)
   (yaol-show-region (point-min) (point-max))
   (dolist (node (yaol-node-children (yaol-get-root-node)))
     (yaol-handle-visibility node :head t :child-head t)))
 
-(defun yaol-fold-popular-head ()
+;;;###autoload
+(defun yaol-fold-in-popular-heads ()
   (interactive)
-  (let ((regexp (or (assoc-default major-mode yaol-popular-head-regexp-alist)
-                    t)))
+  (let ((regexp (or (yaol-popular-head-regexp) t)))
     (yaol-show-region (point-min) (point-max))
     (dolist (node (yaol-node-children (yaol-get-root-node)))
       (yaol-handle-visibility node :head regexp :child-head regexp))))
 
-(defun yaol-fold-popular-level-head ()
+;;;###autoload
+(defun yaol-fold-in-popular-level-heads ()
   (interactive)
-  (let* ((regexp (or (assoc-default major-mode yaol-popular-head-regexp-alist)
-                     t))
+  (let* ((regexp (or (yaol-popular-head-regexp) t))
          (level (assoc-default major-mode yaol-popular-level-alist))
          (level (cond ((functionp level) (funcall level))
                       (level             level)
@@ -533,32 +588,135 @@
       (yaol-handle-visibility node :head regexp :child-head regexp)
       (yaol-handle-visibility node :head level :child-head level))))
 
-(defun yaol-fold-current-all-head ()
+;;;###autoload
+(defun yaol-fold-current ()
   (interactive)
-  (let ((nodes (yaol-find-deepest-nodes-at (point) (point))))
+  (let ((nodes (yaol-find-deepest-nodes-at (point))))
+    (dolist (node nodes)
+      (yaol-show-region (yaol-node-beg node) (yaol-node-end node)))
+    (dolist (node nodes)
+      (yaol-handle-visibility node))))
+
+;;;###autoload
+(defun yaol-fold-in-all-descendant-heads ()
+  (interactive)
+  (let ((nodes (yaol-find-deepest-nodes-at (point))))
     (dolist (node nodes)
       (yaol-show-region (yaol-node-beg node) (yaol-node-end node)))
     (dolist (node nodes)
       (yaol-handle-visibility node :head t :child-head t))))
 
-(defun yaol-fold-current-popular-head ()
+;;;###autoload
+(defun yaol-fold-in-popular-descendant-heads ()
   (interactive)
-  (let ((nodes (yaol-find-deepest-nodes-at (point) (point)))
-        (regexp (or (assoc-default major-mode yaol-popular-head-regexp-alist)
-                    t)))
+  (let ((nodes (yaol-find-deepest-nodes-at (point)))
+        (regexp (or (yaol-popular-head-regexp) t)))
     (dolist (node nodes)
       (yaol-show-region (yaol-node-beg node) (yaol-node-end node)))
     (dolist (node nodes)
       (yaol-handle-visibility node :head t :child-head regexp))))
 
-(defun yaol-fold-current-child-head ()
+;;;###autoload
+(defun yaol-fold-in-child-heads ()
   (interactive)
-  (let ((nodes (yaol-find-deepest-nodes-at (point) (point))))
+  (let ((nodes (yaol-find-deepest-nodes-at (point))))
     (dolist (node nodes)
       (yaol-show-region (yaol-node-beg node) (yaol-node-end node)))
     (dolist (node nodes)
       (yaol-handle-visibility node :head t :child-head 1))))
 
+;;;###autoload
+(defun yaol-fold-in-child-heads-without-body ()
+  (interactive)
+  (let ((nodes (yaol-find-deepest-nodes-at (point))))
+    (dolist (node nodes)
+      (yaol-show-region (yaol-node-beg node) (yaol-node-end node)))
+    (dolist (node nodes)
+      (yaol-handle-visibility node :head t :body t :child-head 1))))
+
+;;;###autoload
+(defun yaol-next-sibling-head ()
+  (interactive)
+  (let* ((pt (point))
+         (node (-last-item (yaol-find-deepest-nodes-at pt)))
+         (next-node (-first-item (yaol-find-nodes-from node
+                                                       (lambda (n) (> (yaol-node-beg n) pt))
+                                                       :include-child nil))))
+    (if next-node
+        (progn (goto-char (yaol-node-beg next-node))
+               (skip-syntax-forward " "))
+      (when (called-interactively-p 'any)
+        (message "Not found next sibling head."))
+      nil)))
+
+;;;###autoload
+(defun yaol-next-head ()
+  (interactive)
+  (let* ((pt (point))
+         (nodes (yaol-find-deepest-nodes-at pt))
+         (next-nodes (remove nil
+                             (cl-loop for node in nodes
+                                      append (yaol-find-nodes-from node
+                                                                   (lambda (n) (> (yaol-node-beg n) pt)))))))
+    (if next-nodes
+        (progn (goto-char (yaol-node-beg (-first-item (yaol-sort-nodes next-nodes))))
+               (skip-syntax-forward " "))
+      (when (called-interactively-p 'any)
+        (message "Not found next head."))
+      nil)))
+
+;;;###autoload
+(defun yaol-previous-sibling-head ()
+  (interactive)
+  (let* ((pt (save-excursion
+               (skip-syntax-backward " ")
+               (point)))
+         (node (-last-item (yaol-find-deepest-nodes-at pt)))
+         (next-node (-first-item (yaol-find-nodes-from node
+                                                       (lambda (n) (< (yaol-node-beg n) pt))
+                                                       :include-child nil
+                                                       :method '-last))))
+    (if next-node
+        (progn (goto-char (yaol-node-beg next-node))
+               (skip-syntax-forward " "))
+      (when (called-interactively-p 'any)
+        (message "Not found previous sibling head."))
+      nil)))
+
+;;;###autoload
+(defun yaol-previous-head ()
+  (interactive)
+  (let* ((pt (save-excursion
+               (skip-syntax-backward " ")
+               (point)))
+         (node (-last-item (yaol-find-deepest-nodes-at pt)))
+         (next-sibling (-first-item (yaol-find-nodes-from node
+                                                          (lambda (n) (< (yaol-node-beg n) pt))
+                                                          :include-child nil
+                                                          :method '-last)))
+         (next-child (when next-sibling
+                       (yaol-find-nodes-from next-sibling
+                                             (lambda (n) (< (yaol-node-beg n) pt))
+                                             :include-sibling nil
+                                             :method '-last)))
+         (next-nodes (remove nil (list next-sibling next-child))))
+    (if next-nodes
+        (progn (goto-char (yaol-node-beg (-last-item (yaol-sort-nodes next-nodes))))
+               (skip-syntax-forward " "))
+      (when (called-interactively-p 'any)
+        (message "Not found previous head."))
+      nil)))
+
+;;;###autoload
+(defun yaol-up-head ()
+  (interactive)
+  (let ((parent (yaol-node-parent (yaol-find-deepest-nodes-at (point)))))
+    (if parent
+        (progn (goto-char (yaol-node-beg parent))
+               (skip-syntax-forward " "))
+      (when (called-interactively-p 'any)
+        (message "Not found parent head."))
+      nil)))
 
 
 (provide 'yaol)
