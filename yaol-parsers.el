@@ -27,6 +27,9 @@
 (require 'dash)
 (require 'cl-lib)
 
+;;;;;;;;;;;;
+;; Parser
+
 ;;;###autoload
 (defun yaol-indent-parser ()
   (yaol-new-nodes-by-indent))
@@ -40,34 +43,14 @@
                               yaol-remove-non-program-position)))
     (yaol-new-nodes-by-positions (append open-positions close-positions))))
 
-(defun yaol-lisp-parser (regex)
-  (remove nil
-          (cl-loop initially (progn (goto-char (point-min))
-                                    (beginning-of-defun -1))
-                   while (< (point) (point-max))
-                   for beg = (point)
-                   for fold-beg = (progn (search-forward-regexp regex nil t)
-                                         (point))
-                   for fold-end = (progn (end-of-defun)
-                                         (backward-char) ;move point to one after the last paren
-                                         (1- (point))) ;don't include the last paren in the fold
-                   for end = (point)
-                   collect (when (> fold-beg beg)
-                             (yaol-new-node beg end fold-beg fold-end))
-                   do (beginning-of-defun -1))))
-
-;;;###autoload
-(defun yaol-c-parser ()
-  (append (yaol-c-style-parser) (yaol-c-macro-parser)))
-
 (defun yaol-c-macro-parser ()
   (let ((open-positions (yaol-collect-open-positions "#if"))
         (close-positions (yaol-collect-close-positions "#endif")))
     (yaol-new-nodes-by-positions (append open-positions close-positions))))
 
 ;;;###autoload
-(defun yaol-java-parser ()
-  (append (yaol-c-style-parser) (yaol-javadoc-parser)))
+(defun yaol-c-parser ()
+  (append (yaol-c-style-parser) (yaol-c-macro-parser)))
 
 ;;; TODO: tag these nodes? have ability to manipulate nodes that are
 ;;; tagged? in a scoped fashion?
@@ -80,8 +63,8 @@
     (yaol-new-nodes-by-positions (append open-positions close-positions))))
 
 ;;;###autoload
-(defun yaol-python-parser ()
-  (yaol-python-subparser (point-min) (point-max)))
+(defun yaol-java-parser ()
+  (append (yaol-c-style-parser) (yaol-javadoc-parser)))
 
 (defun yaol-python-subparser (beg end)
   (goto-char beg)
@@ -97,8 +80,8 @@
 	       do (goto-char new-end)))
 
 ;;;###autoload
-(defun yaol-ruby-parser ()
-  (append (yaol-ruby-block-parser) (yaol-ruby-paren-parser)))
+(defun yaol-python-parser ()
+  (yaol-python-subparser (point-min) (point-max)))
 
 (defun yaol-ruby-block-parser ()
   (let* ((open-re-maker (lambda (&rest words)
@@ -146,6 +129,26 @@
      (yaol-new-nodes-by-positions (append open-positions close-positions)))))
 
 ;;;###autoload
+(defun yaol-ruby-parser ()
+  (append (yaol-ruby-block-parser) (yaol-ruby-paren-parser)))
+
+(defun yaol-lisp-parser (regex)
+  (remove nil
+          (cl-loop initially (progn (goto-char (point-min))
+                                    (beginning-of-defun -1))
+                   while (< (point) (point-max))
+                   for beg = (point)
+                   for fold-beg = (progn (search-forward-regexp regex nil t)
+                                         (point))
+                   for fold-end = (progn (end-of-defun)
+                                         (backward-char) ;move point to one after the last paren
+                                         (1- (point))) ;don't include the last paren in the fold
+                   for end = (point)
+                   collect (when (> fold-beg beg)
+                             (yaol-new-node beg end fold-beg fold-end))
+                   do (beginning-of-defun -1))))
+
+;;;###autoload
 (defun yaol-elisp-parser ()
   (yaol-lisp-parser "(def\\w*\\s-*\\(\\s_\\|\\w\\|[:?!]\\)*\\([ \\t]*(.*?)\\)?"))
 
@@ -155,7 +158,18 @@
 
 ;;;###autoload
 (defun yaol-slim-parser ()
-  (yaol-new-nodes-by-indent))
+  (let* ((nodes (yaol-new-nodes-by-indent))
+         (block-nodes (-filter (lambda (n)
+                                 (string-match (rx bos (* space) (+ (any "a-z0-9_")) ":")
+                                               (buffer-substring-no-properties (yaol-node-beg n) (yaol-node-fold-beg n))))
+                               nodes)))
+    (cl-loop for block-node in block-nodes
+             do (setq nodes
+                      (-remove (lambda (n)
+                                 (and (not (yaol-node-equal? block-node n))
+                                      (yaol-node-covered? block-node n)))
+                               nodes)))
+    nodes))
 
 (defmacro yaol-define-markers-parser (name start-marker end-marker)
   "Create a parser for simple start and end markers."
@@ -171,6 +185,35 @@
 (defun yaol-vim-like-markers-parser (_content))
 (with-no-warnings
   (yaol-define-markers-parser "vim-like" "{{{" "}}}"))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Popular Head Regexp
+
+;;;###autoload
+(defvar yaol-go-popular-head-regexp
+  (rx bos (* space) (or "func" "type") space))
+
+;;;###autoload
+(defvar yaol-perl-popular-head-regexp
+  (rx bos (* space) (or "sub" "struct") space))
+
+;;;###autoload
+(defvar yaol-ruby-popular-head-regexp
+  (rx bos (* space)
+      (or (or "class" "module" "def"
+              "resources" "resource" "scope" "namespace")
+          (and (? "RSpec.") (or "describe" "context" "shared_examples_for" "shared_context"))
+          (and (+ (any "a-zA-Z0-9:")) ".routes.draw"))
+      space))
+
+;;;###autoload
+(defvar yaol-slim-popular-head-regexp
+  (rx bos (* space)
+      (or (and (+ (any "a-z0-9_")) ":")            ; `ruby:' などのブロックや、
+          (or "-" "=" "=>" "=<" "==" "==>" "==<")) ; 制御コード/出力
+      (or eos space)))
+
 
 (provide 'yaol-parsers)
 ;;; yaol-parsers.el ends here

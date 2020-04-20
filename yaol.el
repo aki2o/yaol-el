@@ -56,12 +56,13 @@
   :group 'yaol)
 
 (defcustom yaol-popular-head-regexp-alist
-  `((perl-mode  . yaol-perl-mode-popular-head-regexp)
-    (cperl-mode . yaol-perl-mode-popular-head-regexp)
-    (go-mode    . ,(rx bos (* space) (or "func" "type") space))
-    (ruby-mode  . yaol-ruby-mode-popular-head-regexp))
+  '((perl-mode  . yaol-perl-popular-head-regexp)
+    (cperl-mode . yaol-perl-popular-head-regexp)
+    (go-mode    . yaol-go-popular-head-regexp)
+    (ruby-mode  . yaol-ruby-popular-head-regexp)
+    (slim-mode  . yaol-slim-popular-head-regexp))
   ""
-  :type '(list (cons symbol function))
+  :type '(list (cons symbol symbol))
   :group 'yaol)
 
 (defcustom yaol-popular-level-alist
@@ -105,17 +106,6 @@
                                                   (debug . "debug")
                                                   (trace . "trace")))
 (yaol--log-set-level 'trace)
-
-(defvar yaol-perl-mode-popular-head-regexp
-  (rx bos (* space) (or "sub" "struct") space))
-
-(defvar yaol-ruby-mode-popular-head-regexp
-  (rx bos (* space)
-      (or (or "class" "module" "def"
-              "resources" "resource" "scope" "namespace")
-          (and (? "RSpec.") (or "describe" "context" "shared_examples_for" "shared_context"))
-          (and (+ (any "a-zA-Z0-9:")) ".routes.draw"))
-      space))
 
 (defun yaol-popular-head-regexp ()
   (let ((value (assoc-default major-mode yaol-popular-head-regexp-alist)))
