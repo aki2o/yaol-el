@@ -6,7 +6,7 @@
 ;; Version: 0.0.1
 ;; Keywords: folding
 ;; URL: https://github.com/aki2o/yaol-el
-;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.3.2"))
+;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.3.3"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -532,17 +532,23 @@
                     (not (yaol-folded-at? (yaol-node-beg node)))))
            (list node)))))
 
-(cl-defun yaol-find-nodes-from (node pred &key include-hidden (include-sibling t) (include-child t) (method '-find))
+(cl-defun yaol-find-nodes-from (node pred &key include-hidden (include-sibling t) (include-children t) (method '-find))
   (let* ((filter (lambda (n)
                    (and (funcall pred n)
                         (or include-hidden
                             (not (yaol-folded-at? (yaol-node-beg n)))))))
          (parent (yaol-node-parent node))
-         (sibling (when (and parent include-sibling)
-                    (funcall method filter (yaol-node-children parent))))
-         (child (when include-child
-                  (funcall method filter (yaol-node-children node)))))
-    (remove nil (list sibling child))))
+         (siblings (when (and parent include-sibling)
+                     (funcall method filter (yaol-node-children parent))))
+         (children (when include-children
+                     (funcall method filter (yaol-node-children node))))
+         (descendants (when include-children
+                        (cl-loop for child in (yaol-node-children node)
+                                 append (yaol-find-nodes-from child pred
+                                                              :include-hidden include-hidden
+                                                              :include-sibling nil
+                                                              :method method)))))
+    (remove nil (-flatten (list siblings children descendants)))))
 
 
 ;;;;;;;;;;;;;;;;;;
@@ -635,34 +641,52 @@
       (yaol-handle-visibility node :head t :body t :child-head 1))))
 
 ;;;###autoload
+(defun yaol-next-head ()
+  (interactive)
+  (let* ((pt (point))
+         (next-nodes (yaol-find-nodes-from (yaol-get-root-node)
+                                           (lambda (n) (> (yaol-node-beg n) pt))
+                                           :include-sibling nil)))
+    (if next-nodes
+        (progn (goto-char (yaol-node-beg (-first-item (yaol-sort-nodes next-nodes))))
+               (skip-syntax-forward " ")
+               (point))
+      (when (called-interactively-p 'any)
+        (message "Not found next head."))
+      nil)))
+
+;;;###autoload
+(defun yaol-previous-head ()
+  (interactive)
+  (let* ((pt (save-excursion
+               (skip-syntax-backward " ")
+               (point)))
+         (next-nodes (yaol-find-nodes-from (yaol-get-root-node)
+                                           (lambda (n) (< (yaol-node-beg n) pt))
+                                           :include-sibling nil
+                                           :method '-last)))
+    (if next-nodes
+        (progn (goto-char (yaol-node-beg (-last-item (yaol-sort-nodes next-nodes))))
+               (skip-syntax-forward " ")
+               (point))
+      (when (called-interactively-p 'any)
+        (message "Not found previous head."))
+      nil)))
+
+;;;###autoload
 (defun yaol-next-sibling-head ()
   (interactive)
   (let* ((pt (point))
          (node (-last-item (yaol-find-deepest-nodes-at pt)))
          (next-node (-first-item (yaol-find-nodes-from node
                                                        (lambda (n) (> (yaol-node-beg n) pt))
-                                                       :include-child nil))))
+                                                       :include-children nil))))
     (if next-node
         (progn (goto-char (yaol-node-beg next-node))
-               (skip-syntax-forward " "))
+               (skip-syntax-forward " ")
+               (point))
       (when (called-interactively-p 'any)
         (message "Not found next sibling head."))
-      nil)))
-
-;;;###autoload
-(defun yaol-next-head ()
-  (interactive)
-  (let* ((pt (point))
-         (nodes (yaol-find-deepest-nodes-at pt))
-         (next-nodes (remove nil
-                             (cl-loop for node in nodes
-                                      append (yaol-find-nodes-from node
-                                                                   (lambda (n) (> (yaol-node-beg n) pt)))))))
-    (if next-nodes
-        (progn (goto-char (yaol-node-beg (-first-item (yaol-sort-nodes next-nodes))))
-               (skip-syntax-forward " "))
-      (when (called-interactively-p 'any)
-        (message "Not found next head."))
       nil)))
 
 ;;;###autoload
@@ -674,48 +698,44 @@
          (node (-last-item (yaol-find-deepest-nodes-at pt)))
          (next-node (-first-item (yaol-find-nodes-from node
                                                        (lambda (n) (< (yaol-node-beg n) pt))
-                                                       :include-child nil
+                                                       :include-children nil
                                                        :method '-last))))
     (if next-node
         (progn (goto-char (yaol-node-beg next-node))
-               (skip-syntax-forward " "))
+               (skip-syntax-forward " ")
+               (point))
       (when (called-interactively-p 'any)
         (message "Not found previous sibling head."))
       nil)))
 
 ;;;###autoload
-(defun yaol-previous-head ()
+(defun yaol-up-head ()
   (interactive)
-  (let* ((pt (save-excursion
-               (skip-syntax-backward " ")
-               (point)))
-         (node (-last-item (yaol-find-deepest-nodes-at pt)))
-         (next-sibling (-first-item (yaol-find-nodes-from node
-                                                          (lambda (n) (< (yaol-node-beg n) pt))
-                                                          :include-child nil
-                                                          :method '-last)))
-         (next-child (when next-sibling
-                       (yaol-find-nodes-from next-sibling
-                                             (lambda (n) (< (yaol-node-beg n) pt))
-                                             :include-sibling nil
-                                             :method '-last)))
-         (next-nodes (remove nil (list next-sibling next-child))))
-    (if next-nodes
-        (progn (goto-char (yaol-node-beg (-last-item (yaol-sort-nodes next-nodes))))
-               (skip-syntax-forward " "))
+  (let ((parent (yaol-node-parent (-first-item (yaol-find-deepest-nodes-at (point))))))
+    (if parent
+        (progn (goto-char (yaol-node-beg parent))
+               (skip-syntax-forward " ")
+               (point))
       (when (called-interactively-p 'any)
-        (message "Not found previous head."))
+        (message "Not found parent head."))
       nil)))
 
 ;;;###autoload
-(defun yaol-up-head ()
+(defun yaol-down-head ()
   (interactive)
-  (let ((parent (yaol-node-parent (yaol-find-deepest-nodes-at (point)))))
-    (if parent
-        (progn (goto-char (yaol-node-beg parent))
-               (skip-syntax-forward " "))
+  (let* ((pt (point))
+         (nodes (yaol-find-deepest-nodes-at pt))
+         (next-nodes (remove nil
+                             (cl-loop for node in nodes
+                                      append (yaol-find-nodes-from node
+                                                                   (lambda (n) (> (yaol-node-beg n) pt))
+                                                                   :include-sibling nil)))))
+    (if next-nodes
+        (progn (goto-char (yaol-node-beg (-first-item (yaol-sort-nodes next-nodes))))
+               (skip-syntax-forward " ")
+               (point))
       (when (called-interactively-p 'any)
-        (message "Not found parent head."))
+        (message "Not found down head."))
       nil)))
 
 
