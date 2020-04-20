@@ -153,6 +153,10 @@
 (defun yaol-clj-parser ()
   (yaol-lisp-parser "(def\\(\\w\\|-\\)*\\s-*\\(\\s_\\|\\w\\|[?!]\\)*\\([ \\t]*\\[.*?\\]\\)?"))
 
+;;;###autoload
+(defun yaol-slim-parser ()
+  (yaol-new-nodes-by-indent))
+
 (defmacro yaol-define-markers-parser (name start-marker end-marker)
   "Create a parser for simple start and end markers."
   (let ((start-re (rx-to-string start-marker))
