@@ -51,7 +51,7 @@
     (clojure-mode          . yaol-clj-parser)
     (slim-mode             . yaol-slim-parser)
     (triple-braces         . yaol-vim-like-markers-parser))
-  "alist mapping major-mode to parser function."
+  "Alist of parser in major-mode."
   :type '(list (cons symbol function))
   :group 'yaol)
 
@@ -61,20 +61,21 @@
     (go-mode    . yaol-go-popular-head-regexp)
     (ruby-mode  . yaol-ruby-popular-head-regexp)
     (slim-mode  . yaol-slim-popular-head-regexp))
-  ""
+  "Alist of regexp to filter popular head in major-mode."
   :type '(list (cons symbol symbol))
   :group 'yaol)
 
 (defcustom yaol-popular-level-alist
   '((ruby-mode             . 1)
     (emacs-lisp-mode       . 0)
-    (lisp-interaction-mode . 0))
-  ""
+    (lisp-interaction-mode . 0)
+    (slim-mode             . 5))
+  "Alist of number as popular head level in major-mode."
   :type '(list (cons symbol (choice integer function)))
   :group 'yaol)
 
 (defcustom yaol-default-popular-level 1
-  ""
+  "Number as papular head level in major-mode other than `yaol-popular-level-alist'."
   :type 'integer
   :group 'yaol)
 
