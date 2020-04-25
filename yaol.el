@@ -404,7 +404,7 @@
               (hide-part (show-children? beg end)
                          (if show-children?
                              (yaol-hide-current-level-parts beg end (yaol-node-children node))
-                           (yaol-create-overlay beg end :replacement t))))
+                           (yaol-create-overlay beg end))))
     (let ((show-children? (-any? (lambda (c)
                                    (or (shown-child? child-head (buffer-substring-no-properties (yaol-node-beg c) (yaol-node-fold-beg c)))
                                        (shown-child? child-body (buffer-substring-no-properties (yaol-node-fold-beg c) (yaol-node-fold-end c)))))
@@ -427,44 +427,52 @@
                                       (and (<= beg (yaol-node-beg c))
                                            (> end (yaol-node-beg c))))
                                     children))
-         (next-beg beg)
-         (replacement t))
+         (next-beg beg))
     (cl-loop with prev-child = nil
              while covered-children
              for child = (pop covered-children)
              for overlap? = (and prev-child (yaol-node-overlap? prev-child child))
              if (not overlap?)
-             do (when (yaol-create-overlay next-beg (yaol-node-beg child) :replacement replacement :linefeed t)
-                  (setq replacement nil))
+             do (yaol-create-overlay next-beg (yaol-node-beg child) :indent-keeping t)
              do (progn
                   (when (or (not prev-child)
                             (> (yaol-node-end child) (yaol-node-end prev-child)))
                     (setq prev-child child))
                   (setq next-beg (yaol-node-end prev-child))))
-    (yaol-create-overlay next-beg end :replacement replacement :linefeed t)))
+    (yaol-create-overlay next-beg end :indent-keeping t)))
 
-(cl-defun yaol-create-overlay (beg end &key replacement linefeed)
-  (yaol--info* "start create overlay. beg[%s] end[%s] replacement[%s] linefeed[%s]" beg end replacement linefeed)
-  (when (and linefeed (= (char-before end) ?\n))
-    (yaol--trace* "exclude linefeed before end from overlay.")
-    (setq end (1- end)))
-  (when (and (< beg end)
-             (string-match (rx (not (any blank "\n"))) (buffer-substring-no-properties beg end)))
-    (let ((ov (make-overlay beg end)))
-      (yaol--trace* "created overlay.\n%s" (buffer-substring-no-properties beg end))
+(cl-defun yaol-create-overlay (beg end &key indent-keeping)
+  (yaol--info* "start create overlay. beg[%s] end[%s] indent-keeping[%s]" beg end indent-keeping)
+  (let* ((string (buffer-substring-no-properties beg end))
+         (ov (when (and (< beg end)
+                        (string-match (rx (not (any blank "\n"))) string))
+               (make-overlay beg end)))
+         (contiguous-folded? (when ov
+                               (save-excursion
+                                 (goto-char beg)
+                                 (re-search-backward (rx (+ (any blank "\n")) point) nil t)
+                                 (yaol-folded-at? (-max `(,(1- (point)) ,(point-min)))))))
+         (before-string (when (and ov (not contiguous-folded?))
+                          (propertize yaol-fold-replacement 'face 'yaol-fold-replacement-face)))
+         (before-string (if (and before-string
+                                 indent-keeping
+                                 (string-match (rx bos "\n" (* blank)) string))
+                            (concat (match-string 0 string) before-string)
+                          before-string))
+         (after-string (when (and ov
+                                  indent-keeping
+                                  (string-match (rx "\n" (* blank) eos) string))
+                         (match-string 0 string))))
+    (when ov
+      (yaol--trace* "created overlay.\n[content]%s\n[before]%s\n[after]%s" string before-string after-string)
       (overlay-put ov 'creator 'yaol)
       (overlay-put ov 'invisible t)
       (overlay-put ov 'isearch-open-invisible 'yaol-isearch-open-invisible)
       (overlay-put ov 'isearch-open-invisible-temporary 'yaol-isearch-open-invisible-temporary)
-      (when replacement
-        (let ((prev-pt (save-excursion
-                         (goto-char beg)
-                         (re-search-backward (rx (+ (any blank "\n"))) nil t)
-                         (-max `(,(1- (point)) ,(point-min))))))
-          (yaol--trace* "got previous region point : %s" prev-pt)
-          (when (not (yaol-folded-at? prev-pt))
-            (yaol--trace* "show replacement instead of hidden text.")
-            (overlay-put ov 'display (propertize yaol-fold-replacement 'face 'yaol-fold-replacement-face)))))
+      (when before-string
+        (overlay-put ov 'before-string before-string))
+      (when after-string
+        (overlay-put ov 'after-string after-string))
       ov)))
 
 (defun yaol-folded-at? (point)
