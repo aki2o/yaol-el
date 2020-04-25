@@ -96,7 +96,7 @@
   :group 'yaol)
 
 (defface yaol-fold-replacement-face
-  '((t :inherit 'font-lock-comment-face))
+  '((t :inherit font-lock-warning-face))
   "Face used to display the fold replacement text.")
 
 
