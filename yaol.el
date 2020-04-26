@@ -357,9 +357,9 @@
             (> fold-beg fold-end)
             (> fold-end end))
     (error "Invalid range of the node: beg=%s end=%s fold-beg=%s fold-end=%s" beg end fold-beg fold-end))
-  (when (ignore-errors (= (char-after end) ?\n))
-    (yaol--trace* "include linefeed after end.")
-    (setq end (1+ end)))
+  ;; (when (ignore-errors (= (char-after end) ?\n))
+  ;;   (yaol--trace* "include linefeed after end.")
+  ;;   (setq end (1+ end)))
   (let ((node (vector beg end fold-beg fold-end nil nil))
         (regexp (yaol-popular-head-regexp)))
     (when (or (not (functionp yaol-fold-validate-function))
@@ -379,7 +379,23 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Control Visibility
 
-(cl-defun yaol-create-overlay (beg end &key display-style)
+;; Create overlay with display-style which is nil or 'paragraph.
+;;
+;; ex)
+;; function hoge {
+;;   do_something
+;;   do_otherwise
+;; }
+;;
+;; - nil
+;; function hoge {...}
+;;
+;; - paragraph
+;; function hoge {
+;;   ...
+;; }
+;;
+(cl-defsubst yaol-create-overlay (beg end &key display-style)
   (yaol--info* "start create overlay. beg[%s] end[%s] display-style[%s]" beg end display-style)
   (let* ((string (buffer-substring-no-properties beg end))
          (ov (when (and (< beg end)
@@ -420,8 +436,8 @@
     (yaol-create-overlay next-beg end :display-style 'paragraph)))
 
 (cl-defun yaol-set-overlay-in-node (node &key head body child-head child-body)
-  (yaol--info* "start set overlay in node. head[%s] body[%s] child-head[%s] child-body[%s] : %s"
-               head body child-head child-body (buffer-substring-no-properties (yaol-node-beg node) (yaol-node-fold-beg node)))
+  (yaol--trace* "start set overlay in node. head[%s] body[%s] child-head[%s] child-body[%s]\n%s"
+                head body child-head child-body (buffer-substring-no-properties (yaol-node-beg node) (yaol-node-fold-beg node)))
   (cl-labels ((shown-child? (v s)
                             (cond ((numberp v) (> v 0))
                                   ((stringp v) (string-match v s))
@@ -460,7 +476,18 @@
              (eq (overlay-get ov 'creator) 'yaol))
            (overlays-in beg end)))
 
+;; Remove overlays covered other overlay.
+;;
+;; ex)
+;; function a {
+;;   function b {
+;;     do_something
+;;   }
+;; }
+;;
+;; when overlays set on the body of a and b, remove the overlay to cover b body.
 (defun yaol-remove-duplicate-overlays (ovs)
+  (yaol--trace* "start remove duplicate overlays.")
   (cl-loop for ov1 in ovs
            if (-any? (lambda (ov2)
                        (and (not (eq ov1 ov2))
@@ -468,12 +495,26 @@
                             (<= (overlay-end ov1) (overlay-end ov2))))
                      ovs)
            do (progn
-                (yaol--trace* "removed duplicate overlay. beg[%s] end[%s]" (overlay-start ov1) (overlay-end ov1))
+                (setq ovs (remove ov1 ovs))
+                (yaol--info* "removed duplicate overlay. beg[%s] end[%s]" (overlay-start ov1) (overlay-end ov1))
                 (delete-overlay ov1))
            else
            collect ov1))
 
+;; Merge multiple overlays to brige blank range.
+;;
+;; ex)
+;; function a {
+;;   do_something
+;; }
+;;
+;; function b {
+;;   do_otherwise
+;; }
+;;
+;; when overlays set on the all of a and b, remove the overlay to cover b and expand the end of the overlay to cover a.
 (defun yaol-merge-overlays (ovs)
+  (yaol--trace* "start merge overlays.")
   (cl-loop with prev-ov = nil
            for ov in (-sort (lambda (a b)
                               (< (overlay-start a) (overlay-start b)))
@@ -483,7 +524,7 @@
            if (and string
                    (not (string-match (rx (not (any blank "\n"))) string)))
            do (progn
-                (yaol--trace* "merged overlay. beg[%s] end[%s]" (overlay-start ov) (overlay-end ov))
+                (yaol--info* "merged overlay. beg[%s] end[%s]" (overlay-start ov) (overlay-end ov))
                 (move-overlay prev-ov (overlay-start prev-ov) (overlay-end ov))
                 (delete-overlay ov))
            else
@@ -498,10 +539,12 @@
     (let* ((string (buffer-substring (overlay-start ov) (overlay-end ov)))
            (paragraph-style? (eq (overlay-get ov 'yaol-display-style) 'paragraph))
            (prefix (when (and paragraph-style?
-                              (string-match (rx bos (? "\n") (* blank)) string))
-                     (match-string 0 string)))
+                              (string-match (rx bos (+ (any "\n" blank))) string))
+                     (let ((line (split-string (match-string 0 string) "\n")))
+                       (concat (if (> (length line) 1) "\n" "")
+                               (-last-item line)))))
            (suffix (when (and paragraph-style?
-                              (string-match (rx (? "\n") (* blank) eos) string))
+                              (string-match (rx "\n" (* blank) eos) string))
                      (match-string 0 string)))
            (display (concat (or prefix "")
                             (propertize yaol-fold-replacement 'face 'yaol-fold-replacement-face)
@@ -516,7 +559,7 @@
 (defun yaol-update-display (nodes &rest conditions-list)
   (let* ((beg (-min (-map 'yaol-node-beg nodes)))
          (end (-max (-map 'yaol-node-end nodes))))
-    (yaol--info* "update display. beg[%s] end[%s]\n%s" beg end (mapconcat 'identity conditions-list "\n"))
+    (yaol--info* "update display. beg[%s] end[%s]\n%s" beg end (mapconcat (lambda (c) (format "%s" c)) conditions-list "\n"))
     (yaol-show-region beg end)
     (dolist (c conditions-list)
       (dolist (node nodes)
