@@ -545,13 +545,15 @@
                                (-last-item line)))))
            (suffix (when (and paragraph-style?
                               (string-match (rx "\n" (* blank) eos) string))
-                     (match-string 0 string)))
-           (display (concat (or prefix "")
-                            (propertize yaol-fold-replacement 'face 'yaol-fold-replacement-face)
-                            (or suffix ""))))
-      (yaol--trace* "set invisible. beg[%s] end[%s]\n[content]%s\n[display]%s" (overlay-start ov) (overlay-end ov) string display)
+                     (match-string 0 string))))
+      (yaol--trace* "set invisible. beg[%s] end[%s]\n[content]%s\n[prefix]%s\n[suffix]%s" (overlay-start ov) (overlay-end ov) string prefix suffix)
       (overlay-put ov 'invisible t)
-      (overlay-put ov 'display display))))
+      ;; NOTE:
+      ;;   isearch-open-invisible seems to not work with display option.
+      ;;   So, try to use before-string, after-string as substitute for display option.
+      (overlay-put ov 'before-string (concat (or prefix "")
+                                             (propertize yaol-fold-replacement 'face 'yaol-fold-replacement-face)))
+      (overlay-put ov 'after-string suffix))))
 
 (defun yaol-show-region (beg end)
   (remove-overlays beg end 'creator 'yaol))
