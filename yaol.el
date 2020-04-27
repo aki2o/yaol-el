@@ -522,9 +522,10 @@
            for string = (when prev-ov
                           (buffer-substring (overlay-end prev-ov) (overlay-start ov)))
            if (and string
-                   (not (string-match (rx (not (any blank "\n"))) string)))
+                   (string-match (rx bos (* (any blank "\n")) eos) string))
            do (progn
-                (yaol--info* "merged overlay. beg[%s] end[%s]" (overlay-start ov) (overlay-end ov))
+                (yaol--info* "merged overlay. beg[%s] end[%s] -> beg[%s] end[%s]"
+                             (overlay-start ov) (overlay-end ov) (overlay-start prev-ov) (overlay-end ov))
                 (move-overlay prev-ov (overlay-start prev-ov) (overlay-end ov))
                 (delete-overlay ov))
            else
@@ -570,7 +571,8 @@
                                   :body (plist-get c :body)
                                   :child-head (or (plist-get c :child-head) 0)
                                   :child-body (or (plist-get c :child-body) 0))))
-    (yaol-update-overlay-display beg end)))
+    (yaol-update-overlay-display beg end)
+    (recenter -1)))
 
 (defun yaol-folded-at? (point)
   (> (length (yaol-overlays-in point point)) 0))
