@@ -75,24 +75,6 @@
   :type '(list (cons symbol (choice integer function)))
   :group 'yaol)
 
-(defcustom yaol-motion-function-alist
-  '((t . ((promote . yaol-indent-promote)
-          (demote  . yaol-indent-demote))))
-  ""
-  :type '(list (cons symbol (list (cons symbol function))))
-  :group 'yaol)
-
-(defcustom yaol-indent-method-alist
-  '((ruby-mode . ((tab-p . ruby-indent-tabs-mode)
-                  (width . ruby-indent-level)))
-    (slim-mode . ((tab-p . nil)
-                  (width . slim-indent-offset)))
-    (t         . ((tab-p . indent-tabs-mode)
-                  (width . tab-width))))
-  ""
-  :type '(list (cons symbol (list (cons symbol function))))
-  :group 'yaol)
-
 (defcustom yaol-fold-validate-function 'yaol-validate-node-fold-lines
   "Function to validate the node which should be folded."
   :type 'function
@@ -624,50 +606,6 @@
   (> (length (yaol-overlays-in point point)) 0))
 
 
-;;;;;;;;;;;;
-;; Motion
-
-(defun yaol-indent-string ()
-  (let* ((tab-p (or (assoc-default 'tab-p (assoc-default major-mode yaol-indent-method-alist))
-                    (assoc-default 'tab-p (assoc-default t          yaol-indent-method-alist))))
-         (width (or (assoc-default 'width (assoc-default major-mode yaol-indent-method-alist))
-                    (assoc-default 'width (assoc-default t          yaol-indent-method-alist))))
-         (tab-p (cond ((functionp tab-p) (funcall tab-p))
-                      ((symbolp tab-p)   (eval tab-p))
-                      (t                 tab-p)))
-         (width (cond ((functionp width) (funcall width))
-                      ((symbolp width)   (eval width))
-                      (t                 width))))
-    (if tab-p
-        "\t"
-      (apply 'concat (cl-loop for v from 1 to width collect " ")))))
-
-(defun yaol-indent-promote (node)
-  (let* ((indent (yaol-indent-string))
-         (movable? (lambda (s)
-                     (or (string-match (rx bos (* blank) eos) s)
-                         (string-match (rx-to-string `(and bos ,indent)) s)))))
-    (if (not (-all? movable? (split-string (buffer-substring (yaol-node-beg node) (yaol-node-end node)))))
-        (error "This node is highest level.")
-      (cl-loop initially (goto-char (yaol-node-beg node))
-               for limit = (-min (list (yaol-node-end node) (point-max)))
-               while (progn (beginning-of-line)
-                            (< (point) limit))
-               do (delete-char (length indent))
-               do (forward-line)))))
-
-(defun yaol-indent-demote (node)
-  (let ((indent (yaol-indent-string)))
-    (cl-loop initially (goto-char (yaol-node-beg node))
-             for limit = (-min (list (yaol-node-end node) (point-max)))
-             while (progn (beginning-of-line)
-                          (< (point) limit))
-             for s = (buffer-substring (point) (point-at-eol))
-             if (string-match (rx (not (any blank "\n"))) s)
-             do (insert indent)
-             do (forward-line))))
-
-
 ;;;;;;;;;;;;;;;;;
 ;; Buffer Node
 
@@ -902,28 +840,6 @@
       (when (called-interactively-p 'any)
         (message "Not found down head."))
       nil)))
-
-;;;###autoload
-(defun yaol-promote ()
-  (interactive)
-  (let* ((pt (point))
-         (node (-first-item (yaol-find-deepest-nodes-at pt)))
-         (func (or (assoc-default 'promote (assoc-default major-mode yaol-motion-function-alist))
-                   (assoc-default 'promote (assoc-default t          yaol-motion-function-alist)))))
-    (funcall func node)
-    (goto-char pt)
-    (setq yaol-modified-tick (buffer-modified-tick))))
-
-;;;###autoload
-(defun yaol-demote ()
-  (interactive)
-  (let* ((pt (point))
-         (node (-first-item (yaol-find-deepest-nodes-at pt)))
-         (func (or (assoc-default 'demote (assoc-default major-mode yaol-motion-function-alist))
-                   (assoc-default 'demote (assoc-default t          yaol-motion-function-alist)))))
-    (funcall func node)
-    (goto-char pt)
-    (setq yaol-modified-tick (buffer-modified-tick))))
 
 
 (provide 'yaol)
