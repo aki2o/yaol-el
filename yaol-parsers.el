@@ -210,9 +210,10 @@
 ;;;###autoload
 (defvar yaol-slim-popular-head-regexp
   (rx bos (* space)
-      (or (and (+ (any "a-z0-9_")) ":")            ; `ruby:' などのブロックや、
-          (or "-" "=" "=>" "=<" "==" "==>" "==<")) ; 制御コード/出力
-      (or eos space)))
+      (or (and (or "html" "head" "body" "table" "thead" "tbody" "ul" "ol" "dl" "form") eow) ; major html tag
+          (and "-" (+ not-newline) " do ")                                                  ; maybo loop
+          (and "-" (+ space) (or "if" "elsif" "unless" "for" "while" "until" "when") space) ; condition
+          (and (or "=" "=>" "=<" "==" "==>" "==<") (+ space) (+ not-newline) " do "))))     ; maybe output with block
 
 
 (provide 'yaol-parsers)
