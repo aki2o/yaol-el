@@ -69,14 +69,28 @@
   '((ruby-mode             . 1)
     (emacs-lisp-mode       . 0)
     (lisp-interaction-mode . 0)
-    (slim-mode             . 5))
+    (slim-mode             . 5)
+    (t                     . 1))
   "Alist of number as popular head level in major-mode."
   :type '(list (cons symbol (choice integer function)))
   :group 'yaol)
 
-(defcustom yaol-default-popular-level 1
-  "Number as papular head level in major-mode other than `yaol-popular-level-alist'."
-  :type 'integer
+(defcustom yaol-motion-function-alist
+  '((t . ((promote . yaol-indent-promote)
+          (demote  . yaol-indent-demote))))
+  ""
+  :type '(list (cons symbol (list (cons symbol function))))
+  :group 'yaol)
+
+(defcustom yaol-indent-method-alist
+  '((ruby-mode . ((tab-p . ruby-indent-tabs-mode)
+                  (width . ruby-indent-level)))
+    (slim-mode . ((tab-p . nil)
+                  (width . slim-indent-offset)))
+    (t         . ((tab-p . indent-tabs-mode)
+                  (width . tab-width))))
+  ""
+  :type '(list (cons symbol (list (cons symbol function))))
   :group 'yaol)
 
 (defcustom yaol-fold-validate-function 'yaol-validate-node-fold-lines
@@ -162,6 +176,15 @@
 
 (defsubst yaol-node-tail-on? (node point)
   (and (>= point (yaol-node-fold-end node)) (< point (yaol-node-end node))))
+
+(defsubst yaol-node-prefix-part (node)
+  (buffer-substring (yaol-node-beg node) (yaol-node-fold-beg node)))
+
+(defsubst yaol-node-body-part (node)
+  (buffer-substring (yaol-node-fold-beg node) (yaol-node-fold-end node)))
+
+(defsubst yaol-node-suffix-part (node)
+  (buffer-substring (yaol-node-fold-end node) (yaol-node-end node)))
 
 
 ;;;;;;;;;;;;;;;;;;
@@ -351,17 +374,23 @@
          yaol-fold-minimum-lines)))
 
 (defun yaol-new-node (beg end fold-beg fold-end)
-  (yaol--info* "start new node. beg[%s] end[%s] fold-beg[%s] fold-end[%s] : %s"
+  (yaol--info* "start new node. beg[%d] end[%d] fold-beg[%d] fold-end[%d] : %s"
                beg end fold-beg fold-end (buffer-substring-no-properties beg fold-beg))
   (when (or (> beg fold-beg)
             (> fold-beg fold-end)
             (> fold-end end))
-    (error "Invalid range of the node: beg=%s end=%s fold-beg=%s fold-end=%s" beg end fold-beg fold-end))
+    (error "Invalid range of the node: beg=%d end=%d fold-beg=%d fold-end=%d" beg end fold-beg fold-end))
   ;; (when (ignore-errors (= (char-after end) ?\n))
   ;;   (yaol--trace* "include linefeed after end.")
   ;;   (setq end (1+ end)))
-  (let ((node (vector beg end fold-beg fold-end nil nil))
-        (regexp (yaol-popular-head-regexp)))
+  (let* ((args (cl-loop for e in (list beg end fold-beg fold-end nil nil)
+                        if e
+                        do (setq e (let ((m (make-marker)))
+                                     (set-marker m e)
+                                     m))
+                        collect e))
+         (node (apply 'vector args))
+         (regexp (yaol-popular-head-regexp)))
     (when (or (not (functionp yaol-fold-validate-function))
               (funcall yaol-fold-validate-function node)
               (and regexp (string-match regexp (buffer-substring-no-properties beg fold-beg))))
@@ -395,8 +424,8 @@
 ;;   ...
 ;; }
 ;;
-(cl-defsubst yaol-create-overlay (beg end &key display-style)
-  (yaol--info* "start create overlay. beg[%s] end[%s] display-style[%s]" beg end display-style)
+(cl-defsubst yaol-create-overlay (node beg end &key display-style)
+  (yaol--info* "start create overlay. beg[%d] end[%d] display-style[%s]" beg end display-style)
   (let* ((string (buffer-substring-no-properties beg end))
          (ov (when (and (< beg end)
                         (string-match (rx (not (any blank "\n"))) string))
@@ -407,69 +436,85 @@
       (overlay-put ov 'isearch-open-invisible 'yaol-isearch-open-invisible)
       (overlay-put ov 'isearch-open-invisible-temporary 'yaol-isearch-open-invisible-temporary)
       (overlay-put ov 'yaol-display-style display-style)
+      (overlay-put ov 'yaol-node node)
       ov)))
 
 (defun yaol-isearch-open-invisible (ov)
-  (overlay-put ov 'invisible nil))
+  (delete-overlay ov))
 
 (defun yaol-isearch-open-invisible-temporary (ov hide-p)
   (overlay-put ov 'invisible (if hide-p 'yaol nil)))
 
-(cl-defsubst yaol-set-overlay-in-current-level (beg end children &key head body child-head child-body)
+(cl-defsubst yaol-set-overlay-in-current-level (node beg end &key head body child-head child-body)
   (let* ((covered-children (-filter (lambda (c)
-                                      (and (<= beg (yaol-node-beg c))
-                                           (> end (yaol-node-beg c))))
-                                    children))
-         (next-beg beg))
+                                      (and (<= beg (yaol-node-beg c)) (> end (yaol-node-beg c))))
+                                    (yaol-node-children node)))
+         (next-beg beg)
+         results)
     (cl-loop with prev-child = nil
              while covered-children
              for child = (pop covered-children)
              for overlap? = (and prev-child (yaol-node-overlap? prev-child child))
              if (not overlap?)
-             do (yaol-create-overlay next-beg (yaol-node-beg child) :display-style 'paragraph)
+             do (push (yaol-create-overlay node next-beg (yaol-node-beg child) :display-style 'paragraph) results)
              do (progn
-                  (yaol-set-overlay-in-node child :head head :body body :child-head child-head :child-body child-body)
+                  (push (yaol-set-overlay-in-node child :head head :body body :child-head child-head :child-body child-body) results)
                   (when (or (not prev-child)
                             (> (yaol-node-end child) (yaol-node-end prev-child)))
                     (setq prev-child child))
                   (setq next-beg (yaol-node-end prev-child))))
-    (yaol-create-overlay next-beg end :display-style 'paragraph)))
+    (push (yaol-create-overlay node next-beg end :display-style 'paragraph) results)
+    (cond ((-all? (lambda (x) (not x)) results)
+           ;; When show all range
+           nil)
+          ((-all? (lambda (x) (eq x t)) results)
+           ;; When hide all range
+           t)
+          (t
+           ;; When hide part of range
+           'any))))
 
 (cl-defun yaol-set-overlay-in-node (node &key head body child-head child-body)
   (yaol--trace* "start set overlay in node. head[%s] body[%s] child-head[%s] child-body[%s]\n%s"
-                head body child-head child-body (buffer-substring-no-properties (yaol-node-beg node) (yaol-node-fold-beg node)))
-  (cl-labels ((shown-child? (v s)
-                            (cond ((numberp v) (> v 0))
-                                  ((stringp v) (string-match v s))
-                                  (t           v)))
-              (next-value (v)
-                          (if (numberp v) (> v 0) v))
-              (next-child-value (v)
-                                (if (numberp v) (1- v) v))
-              (hide-part (show-children? beg end &optional display-style)
-                         (if show-children?
-                             (yaol-set-overlay-in-current-level beg end (yaol-node-children node)
-                                                                :head (next-value child-head)
-                                                                :body (next-value child-body)
-                                                                :child-head (next-child-value child-head)
-                                                                :child-body (next-child-value child-body))
-                           (yaol-create-overlay beg end :display-style display-style))))
-    (let ((show-head? (if (stringp head)
-                          (string-match head (buffer-substring-no-properties (yaol-node-beg node) (yaol-node-fold-beg node)))
-                        head))
-          (show-body? (if (stringp body)
-                          (string-match body (buffer-substring-no-properties (yaol-node-fold-beg node) (yaol-node-fold-end node)))
-                        body))
-          (show-children? (-any? (lambda (c)
-                                   (or (shown-child? child-head (buffer-substring-no-properties (yaol-node-beg c) (yaol-node-fold-beg c)))
-                                       (shown-child? child-body (buffer-substring-no-properties (yaol-node-fold-beg c) (yaol-node-fold-end c)))))
-                                 (yaol-node-children node))))
-      (when (not show-head?)
-        (hide-part show-children? (yaol-node-beg node) (yaol-node-fold-beg node) 'paragraph))
-      (when (not show-body?)
-        (hide-part show-children? (yaol-node-fold-beg node) (yaol-node-fold-end node)))
-      (when (not show-head?)
-        (hide-part show-children? (yaol-node-fold-end node) (yaol-node-end node))))))
+                head body child-head child-body (yaol-node-prefix-part node))
+  (let* ((show-child? (lambda (v s)
+                        (cond ((numberp v) (> v 0))
+                              ((stringp v) (string-match v s))
+                              (t           v))))
+         (show-children? (-any? (lambda (c)
+                                  (or (funcall show-child? child-head (yaol-node-prefix-part c))
+                                      (funcall show-child? child-body (yaol-node-body-part c))))
+                                (yaol-node-children node)))
+         (next-value (lambda (v) (if (numberp v) (> v 0) v)))
+         (next-child-value (lambda (v) (if (numberp v) (1- v) v)))
+         (next-head (funcall next-value child-head))
+         (next-body (funcall next-value child-body))
+         (next-child-head (funcall next-child-value child-head))
+         (next-child-body (funcall next-child-value child-body))
+         (hide-part (lambda (beg end &optional display-style)
+                      (if show-children?
+                          (yaol-set-overlay-in-current-level node beg end :head next-head :body next-body :child-head next-child-head :child-body next-child-body)
+                        (yaol-create-overlay node beg end :display-style display-style))))
+         (show-body? (cond ((stringp body) (string-match body (yaol-node-body-part node)))
+                           (t              body)))
+         (body-result (when (not show-body?)
+                        (funcall hide-part (yaol-node-fold-beg node) (yaol-node-fold-end node))))
+         (show-head? (cond ((not (eq body-result t)) t) ; should show if any body shown
+                           ((stringp head)           (string-match head (yaol-node-prefix-part node)))
+                           (t                        head)))
+         (prefix-result (when (not show-head?)
+                          (funcall hide-part (yaol-node-beg node) (yaol-node-fold-beg node) 'paragraph)))
+         (suffix-result (when (not show-head?)
+                          (funcall hide-part (yaol-node-fold-end node) (yaol-node-end node)))))
+    (cond ((-all? (lambda (x) (not x)) (list prefix-result body-result suffix-result))
+           ;; When show all range
+           nil)
+          ((-all? (lambda (x) (eq x t)) (list prefix-result body-result suffix-result))
+           ;; When hide all range
+           t)
+          (t
+           ;; When hide part of range
+           'any))))
 
 (defun yaol-overlays-in (beg end)
   (-filter (lambda (ov)
@@ -496,7 +541,7 @@
                      ovs)
            do (progn
                 (setq ovs (remove ov1 ovs))
-                (yaol--info* "removed duplicate overlay. beg[%s] end[%s]" (overlay-start ov1) (overlay-end ov1))
+                (yaol--info* "removed duplicate overlay. beg[%d] end[%d]" (overlay-start ov1) (overlay-end ov1))
                 (delete-overlay ov1))
            else
            collect ov1))
@@ -522,9 +567,10 @@
            for string = (when prev-ov
                           (buffer-substring (overlay-end prev-ov) (overlay-start ov)))
            if (and string
-                   (string-match (rx bos (* (any blank "\n")) eos) string))
+                   (string-match (rx bos (* (any blank "\n")) eos) string)
+                   (<= (yaol-node-level (overlay-get prev-ov 'yaol-node)) (yaol-node-level (overlay-get ov 'yaol-node))))
            do (progn
-                (yaol--info* "merged overlay. beg[%s] end[%s] -> beg[%s] end[%s]"
+                (yaol--info* "merged overlay. beg[%d] end[%d] -> beg[%d] end[%d]"
                              (overlay-start ov) (overlay-end ov) (overlay-start prev-ov) (overlay-end ov))
                 (move-overlay prev-ov (overlay-start prev-ov) (overlay-end ov))
                 (delete-overlay ov))
@@ -533,7 +579,7 @@
                      (setq prev-ov ov))))
 
 (defun yaol-update-overlay-display (beg end)
-  (yaol--info* "start update overlay display. beg[%s] end[%s]" beg end)
+  (yaol--info* "start update overlay display. beg[%d] end[%d]" beg end)
   (dolist (ov (-> (yaol-overlays-in beg end)
                   yaol-remove-duplicate-overlays
                   yaol-merge-overlays))
@@ -547,7 +593,7 @@
            (suffix (when (and paragraph-style?
                               (string-match (rx "\n" (* blank) eos) string))
                      (match-string 0 string))))
-      (yaol--trace* "set invisible. beg[%s] end[%s]\n[content]%s\n[prefix]%s\n[suffix]%s" (overlay-start ov) (overlay-end ov) string prefix suffix)
+      (yaol--trace* "set invisible. beg[%d] end[%d]\n[content]%s\n[prefix]%s\n[suffix]%s" (overlay-start ov) (overlay-end ov) string prefix suffix)
       (overlay-put ov 'invisible t)
       ;; NOTE:
       ;;   isearch-open-invisible seems to not work with display option.
@@ -562,7 +608,7 @@
 (defun yaol-update-display (nodes &rest conditions-list)
   (let* ((beg (-min (-map 'yaol-node-beg nodes)))
          (end (-max (-map 'yaol-node-end nodes))))
-    (yaol--info* "update display. beg[%s] end[%s]\n%s" beg end (mapconcat (lambda (c) (format "%s" c)) conditions-list "\n"))
+    (yaol--info* "update display. beg[%d] end[%d]\n%s" beg end (mapconcat (lambda (c) (format "%s" c)) conditions-list "\n"))
     (yaol-show-region beg end)
     (dolist (c conditions-list)
       (dolist (node nodes)
@@ -576,6 +622,50 @@
 
 (defun yaol-folded-at? (point)
   (> (length (yaol-overlays-in point point)) 0))
+
+
+;;;;;;;;;;;;
+;; Motion
+
+(defun yaol-indent-string ()
+  (let* ((tab-p (or (assoc-default 'tab-p (assoc-default major-mode yaol-indent-method-alist))
+                    (assoc-default 'tab-p (assoc-default t          yaol-indent-method-alist))))
+         (width (or (assoc-default 'width (assoc-default major-mode yaol-indent-method-alist))
+                    (assoc-default 'width (assoc-default t          yaol-indent-method-alist))))
+         (tab-p (cond ((functionp tab-p) (funcall tab-p))
+                      ((symbolp tab-p)   (eval tab-p))
+                      (t                 tab-p)))
+         (width (cond ((functionp width) (funcall width))
+                      ((symbolp width)   (eval width))
+                      (t                 width))))
+    (if tab-p
+        "\t"
+      (apply 'concat (cl-loop for v from 1 to width collect " ")))))
+
+(defun yaol-indent-promote (node)
+  (let* ((indent (yaol-indent-string))
+         (movable? (lambda (s)
+                     (or (string-match (rx bos (* blank) eos) s)
+                         (string-match (rx-to-string `(and bos ,indent)) s)))))
+    (if (not (-all? movable? (split-string (buffer-substring (yaol-node-beg node) (yaol-node-end node)))))
+        (error "This node is highest level.")
+      (cl-loop initially (goto-char (yaol-node-beg node))
+               for limit = (-min (list (yaol-node-end node) (point-max)))
+               while (progn (beginning-of-line)
+                            (< (point) limit))
+               do (delete-char (length indent))
+               do (forward-line)))))
+
+(defun yaol-indent-demote (node)
+  (let ((indent (yaol-indent-string)))
+    (cl-loop initially (goto-char (yaol-node-beg node))
+             for limit = (-min (list (yaol-node-end node) (point-max)))
+             while (progn (beginning-of-line)
+                          (< (point) limit))
+             for s = (buffer-substring (point) (point-at-eol))
+             if (string-match (rx (not (any blank "\n"))) s)
+             do (insert indent)
+             do (forward-line))))
 
 
 ;;;;;;;;;;;;;;;;;
@@ -680,10 +770,9 @@
 (defun yaol-fold-in-popular-level-heads ()
   (interactive)
   (let* ((regexp (or (yaol-popular-head-regexp) t))
-         (level (assoc-default major-mode yaol-popular-level-alist))
-         (level (cond ((functionp level) (funcall level))
-                      (level             level)
-                      (t                 yaol-default-popular-level))))
+         (level (or (assoc-default major-mode yaol-popular-level-alist)
+                    (assoc-default t          yaol-popular-level-alist)))
+         (level (if (functionp level) (funcall level) level)))
     (yaol-update-display (yaol-node-children (yaol-get-root-node))
                          `(:head ,regexp :child-head ,regexp)
                          `(:head ,level :child-head ,level))))
@@ -813,6 +902,28 @@
       (when (called-interactively-p 'any)
         (message "Not found down head."))
       nil)))
+
+;;;###autoload
+(defun yaol-promote ()
+  (interactive)
+  (let* ((pt (point))
+         (node (-first-item (yaol-find-deepest-nodes-at pt)))
+         (func (or (assoc-default 'promote (assoc-default major-mode yaol-motion-function-alist))
+                   (assoc-default 'promote (assoc-default t          yaol-motion-function-alist)))))
+    (funcall func node)
+    (goto-char pt)
+    (setq yaol-modified-tick (buffer-modified-tick))))
+
+;;;###autoload
+(defun yaol-demote ()
+  (interactive)
+  (let* ((pt (point))
+         (node (-first-item (yaol-find-deepest-nodes-at pt)))
+         (func (or (assoc-default 'demote (assoc-default major-mode yaol-motion-function-alist))
+                   (assoc-default 'demote (assoc-default t          yaol-motion-function-alist)))))
+    (funcall func node)
+    (goto-char pt)
+    (setq yaol-modified-tick (buffer-modified-tick))))
 
 
 (provide 'yaol)
