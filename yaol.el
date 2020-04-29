@@ -407,7 +407,7 @@
 ;; }
 ;;
 (cl-defsubst yaol-create-overlay (node beg end &key display-style)
-  (yaol--info* "start create overlay. beg[%d] end[%d] display-style[%s]" beg end display-style)
+  (yaol--info* "start create overlay. beg[%d] end[%d] display-style[%s]" (marker-position beg) (marker-position end) display-style)
   (let* ((string (buffer-substring-no-properties beg end))
          (ov (when (and (< beg end)
                         (string-match (rx (not (any blank "\n"))) string))
@@ -457,7 +457,7 @@
            'any))))
 
 (cl-defun yaol-set-overlay-in-node (node &key head body child-head child-body)
-  (yaol--trace* "start set overlay in node. head[%s] body[%s] child-head[%s] child-body[%s]\n%s"
+  (yaol--trace* "start set overlay in node. head[%s] body[%s] child-head[%s] child-body[%s] : %s"
                 head body child-head child-body (yaol-node-prefix-part node))
   (let* ((show-child? (lambda (v s)
                         (cond ((numberp v) (> v 0))
