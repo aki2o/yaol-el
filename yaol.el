@@ -6,7 +6,7 @@
 ;; Version: 0.0.1
 ;; Keywords: folding
 ;; URL: https://github.com/aki2o/yaol-el
-;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.3.3"))
+;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.3.3") (yaxception "0.3.3"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 (require 'dash)
 (require 'cl-lib)
 (require 'log4e)
+(require 'yaxception)
 
 (defgroup yaol nil
   "Yet another outline."
@@ -217,22 +218,22 @@
 ;;;;;;;;;;;;;;;;
 ;; Parser API
 
-(defun yaol-collect-positions (regex &optional type)
+(cl-defun yaol-collect-positions (regex &key type start end)
   (save-excursion
-    (cl-loop initially (goto-char (point-min))
-             while (re-search-forward regex nil t)
+    (cl-loop initially (goto-char (or start (point-min)))
+             while (re-search-forward regex end t)
              for string = (or (match-string 1) (match-string 0))
              for point = (or (match-beginning 1) (match-beginning 0))
              collect `(:type ,type :string ,string :point ,point))))
 
 (defun yaol-collect-open-positions (regexp)
-  (yaol-collect-positions regexp 'open))
+  (yaol-collect-positions regexp :type 'open))
 
 (defun yaol-collect-close-positions (regexp)
-  (yaol-collect-positions regexp 'close))
+  (yaol-collect-positions regexp :type 'close))
 
 (defun yaol-has-any-face-position? (position faces)
-  (let ((face (get-text-property 0 'face (plist-get position :string))))
+  (let ((face (get-text-property 0 'face (or (plist-get position :string) ""))))
     (-any? (lambda (f) (memq f faces))
            (if (listp face) face (list face)))))
 
@@ -258,12 +259,17 @@
 (cl-defun yaol-expand-position-to-beginning-of-expression (positions &key (end-of-expressions '(";")))
   (save-excursion
     (-map (lambda (pos)
-            (goto-char (plist-get pos :point))
-            (if (re-search-backward (rx-to-string `(or bol ,@end-of-expressions)) nil t)
-                `(:type ,(plist-get pos :type)
-                        :string ,(concat (buffer-substring (match-end 0) (plist-get pos :point)) (plist-get pos :string))
-                        :point ,(match-end 0))
-              pos))
+            (let* ((beg (progn
+                          (goto-char (plist-get pos :point))
+                          (-> (yaol-collect-positions (rx-to-string `(or ,@end-of-expressions)) :start (point-at-bol) :end (point))
+                              yaol-remove-non-program-position
+                              -last-item)))
+                   (beg (if beg
+                            (+ (plist-get beg :point) (length (plist-get beg :string)))
+                          (point-at-bol))))
+              `(:type ,(plist-get pos :type)
+                      :string ,(concat (buffer-substring beg (plist-get pos :point)) (plist-get pos :string))
+                      :point ,beg)))
           positions)))
 
 ;; Helper to expand head range to end of head.
@@ -277,18 +283,25 @@
 ;;     yaol-expand-head-position)            ; => class Something ... end
 ;;
 (cl-defun yaol-expand-head-position (positions &key (end-of-headers '()) (include-indent t))
-  (-map (lambda (pos)
-          (let ((pt (progn
-                      (goto-char (plist-get pos :point))
-                      (if (and include-indent
-                               (looking-back (rx (+ (any " \t"))) nil t))
-                          (match-beginning 0)
-                        (point)))))
-            (re-search-forward (rx-to-string `(or eol ,@end-of-headers)) nil t)
-            `(:type ,(plist-get pos :type)
-                    :string ,(buffer-substring pt (point))
-                    :point ,pt)))
-        positions))
+  (save-excursion
+    (-map (lambda (pos)
+            (let* ((start (progn
+                            (goto-char (plist-get pos :point))
+                            (if (and include-indent
+                                     (looking-back (rx (+ (any " \t"))) nil t))
+                                (match-beginning 0)
+                              (point))))
+                   (end (when (> (length end-of-headers) 0)
+                          (-> (yaol-collect-positions (rx-to-string `(or ,@end-of-headers)) :start start :end (point-at-eol))
+                              yaol-remove-non-program-position
+                              -first-item)))
+                   (end (if end
+                            (+ (plist-get end :point) (length (plist-get end :string)))
+                          (point-at-eol))))
+              `(:type ,(plist-get pos :type)
+                      :string ,(buffer-substring start end)
+                      :point ,start)))
+          positions)))
 
 (defun yaol-new-nodes-by-positions (positions)
   (cl-labels ((point-at-fold (pos)
@@ -600,7 +613,8 @@
                                   :child-head (or (plist-get c :child-head) 0)
                                   :child-body (or (plist-get c :child-body) 0))))
     (yaol-update-overlay-display beg end)
-    (recenter -1)))
+    (when (window-live-p (get-buffer-window))
+      (recenter -1))))
 
 (defun yaol-folded-at? (point)
   (> (length (yaol-overlays-in point point)) 0))
@@ -626,8 +640,14 @@
     (let* ((parser (or (assoc-default (buffer-local-value 'major-mode buffer) yaol-parser-alist)
                        (buffer-local-value 'yaol-parser buffer)
                        (error "Not found parser for %s" (buffer-name buffer))))
-           (nodes (save-excursion
-                    (funcall parser))))
+           (nodes (or (if (yaol--log-debugging-p)
+                          (yaxception:$
+                            (yaxception:try
+                              (save-excursion (funcall parser)))
+                            (yaxception:catch 'error e
+                              (yaol--fatal "failed to parse : %s\n%s" (yaxception:get-text e) (yaxception:get-stack-trace-string e))))
+                        (ignore-errors (save-excursion (funcall parser))))
+                      (error "Failed to parse yaol nodes from %s" (buffer-name)))))
       (setq yaol-root-node (yaol-new-root-node nodes))
       (setq yaol-modified-tick (buffer-modified-tick)))))
 

@@ -94,29 +94,33 @@
          (loop-positions (-> (yaol-collect-open-positions (funcall open-re-maker "for" "while" "until"))
                              yaol-remove-non-program-position
                              (yaol-expand-head-position :end-of-headers '(";" "do"))))
-         (loop-positions (cl-remove-if
-                          (lambda (position)
-                            ;; A loop syntax accepts expression with `do' like the following code.
-                            ;;
-                            ;; while (
-                            ;;   i += 1
-                            ;; ) < limit do
-                            ;;   something
-                            ;; end
-                            ;;
-                            ;; Therefore, reject if next `do' has found before `end' or nested loop syntax start.
-                            (let ((do-position (or (-first (lambda (x) (> (cdr x) (cdr position))) do-positions) (point-max)))
-                                  (end-position (or (-first (lambda (x) (> (cdr x) (cdr position))) end-positions) (point-max)))
-                                  (loop-position (or (-first (lambda (x) (> (cdr x) (cdr position))) loop-positions) (point-max))))
-                              (and (< do-position end-position)
-                                   (< do-position loop-position))))
-                          loop-positions))
          (if-positions (-> (yaol-collect-open-positions (funcall open-re-maker "if" "unless"))
                            yaol-remove-non-program-position
                            (yaol-expand-head-position :end-of-headers '(";" "then"))))
          (other-positions (-> (yaol-collect-open-positions (funcall open-re-maker "class" "module" "def" "begin" "case"))
                               yaol-remove-non-program-position
                               yaol-expand-head-position)))
+    (cl-loop for position in loop-positions
+             ;; A loop syntax accepts expression with `do' like the following code.
+             ;;
+             ;; while (
+             ;;   i += 1
+             ;; ) < limit do
+             ;;   something
+             ;; end
+             ;;
+             ;; Therefore, reject it if next `do' has found before `end' or nested loop syntax start.
+             for pt = (plist-get position :point)
+             for do-points = (mapcar (lambda (x) (plist-get x :point)) do-positions)
+             for end-points = (mapcar (lambda (x) (plist-get x :point)) end-positions)
+             for loop-points = (mapcar (lambda (x) (plist-get x :point)) loop-positions)
+             for do-point = (or (-first (lambda (x) (>= x pt)) do-points) (point-max))
+             for end-point = (or (-first (lambda (x) (> x pt)) end-points) (point-max))
+             for loop-point = (or (-first (lambda (x) (> x pt)) loop-points) (point-max))
+             if (and (< do-point end-point)
+                     (< do-point loop-point))
+             do (setq do-positions
+                      (-remove (lambda (x) (= (plist-get x :point) do-point)) do-positions)))
     (yaol-new-nodes-by-positions (append end-positions do-positions loop-positions if-positions other-positions))))
 
 (defun yaol-ruby-paren-parser ()
