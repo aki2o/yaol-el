@@ -6,7 +6,7 @@
 ;; Version: 0.0.1
 ;; Keywords: folding
 ;; URL: https://github.com/aki2o/yaol-el
-;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.4.0") (yaxception "1.0.0"))
+;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.4.1") (yaxception "1.0.0"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
