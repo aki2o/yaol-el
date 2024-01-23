@@ -212,6 +212,15 @@
       space))
 
 ;;;###autoload
+(defvar yaol-ts-popular-head-regexp
+  (rx bos (* space)
+      (or (and (? "export" (+ space)) (or "class" "interface" "type" "enum"))
+          (and (? (or "public" "private" "protected") (+ space)) (? "static" (+ space)) (or "async" "function" "async function"))
+          (or "constructor"
+              "describe" "context" "test" "it" "beforeAll" "beforeEach" "afterAll" "afterEach"))
+      space))
+
+;;;###autoload
 (defvar yaol-slim-popular-head-regexp
   (rx bos (* space)
       (or (and (or "html" "head" "body" "table" "thead" "tbody" "ul" "ol" "dl" "form") eow) ; major html tag

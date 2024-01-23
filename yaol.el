@@ -6,7 +6,7 @@
 ;; Version: 0.0.1
 ;; Keywords: folding
 ;; URL: https://github.com/aki2o/yaol-el
-;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.3.3") (yaxception "0.3.3"))
+;; Package-Requires: ((dash "2.5.0") (cl-lib "0.5") (log4e "0.4.0") (yaxception "1.0.0"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -43,6 +43,7 @@
     (js-mode               . yaol-c-style-parser)
     (js2-mode              . yaol-c-style-parser)
     (js3-mode              . yaol-c-style-parser)
+    (typescript-mode       . yaol-c-style-parser)
     (go-mode               . yaol-c-style-parser)
     (php-mode              . yaol-c-style-parser)
     (python-mode           . yaol-python-parser)
@@ -57,17 +58,19 @@
   :group 'yaol)
 
 (defcustom yaol-popular-head-regexp-alist
-  '((perl-mode  . yaol-perl-popular-head-regexp)
-    (cperl-mode . yaol-perl-popular-head-regexp)
-    (go-mode    . yaol-go-popular-head-regexp)
-    (ruby-mode  . yaol-ruby-popular-head-regexp)
-    (slim-mode  . yaol-slim-popular-head-regexp))
+  '((perl-mode       . yaol-perl-popular-head-regexp)
+    (cperl-mode      . yaol-perl-popular-head-regexp)
+    (typescript-mode . yaol-ts-popular-head-regexp)
+    (go-mode         . yaol-go-popular-head-regexp)
+    (ruby-mode       . yaol-ruby-popular-head-regexp)
+    (slim-mode       . yaol-slim-popular-head-regexp))
   "Alist of regexp to filter popular head in major-mode."
   :type '(list (cons symbol symbol))
   :group 'yaol)
 
 (defcustom yaol-popular-level-alist
-  '((ruby-mode             . 1)
+  '((typescript-mode       . 1)
+    (ruby-mode             . 1)
     (emacs-lisp-mode       . 0)
     (lisp-interaction-mode . 0)
     (slim-mode             . 5)
@@ -82,7 +85,7 @@
   :group 'yaol)
 
 (defcustom yaol-fold-minimum-lines 5
-  "Line size to fold if folded region line size is over the value by `yaol-validate-node-fold-lines'."
+  "Line size of folded region to fold by `yaol-validate-node-fold-lines'."
   :type 'integer
   :group 'yaol)
 
@@ -261,12 +264,12 @@
     (-map (lambda (pos)
             (let* ((beg (progn
                           (goto-char (plist-get pos :point))
-                          (-> (yaol-collect-positions (rx-to-string `(or ,@end-of-expressions)) :start (point-at-bol) :end (point))
+                          (-> (yaol-collect-positions (rx-to-string `(or ,@end-of-expressions)) :start (pos-bol) :end (point))
                               yaol-remove-non-program-position
                               -last-item)))
                    (beg (if beg
                             (+ (plist-get beg :point) (length (plist-get beg :string)))
-                          (point-at-bol))))
+                          (pos-bol))))
               `(:type ,(plist-get pos :type)
                       :string ,(concat (buffer-substring beg (plist-get pos :point)) (plist-get pos :string))
                       :point ,beg)))
@@ -292,12 +295,12 @@
                                 (match-beginning 0)
                               (point))))
                    (end (when (> (length end-of-headers) 0)
-                          (-> (yaol-collect-positions (rx-to-string `(or ,@end-of-headers)) :start start :end (point-at-eol))
+                          (-> (yaol-collect-positions (rx-to-string `(or ,@end-of-headers)) :start start :end (pos-eol))
                               yaol-remove-non-program-position
                               -first-item)))
                    (end (if end
                             (+ (plist-get end :point) (length (plist-get end :string)))
-                          (point-at-eol))))
+                          (pos-eol))))
               `(:type ,(plist-get pos :type)
                       :string ,(buffer-substring start end)
                       :point ,start)))
@@ -336,17 +339,17 @@
               (cl-loop initially (goto-char (point-min))
                        with nodes          = nil
                        with open-positions = nil
-                       with prev-point     = (point-at-bol)
-                       with prev-string    = (buffer-substring-no-properties prev-point (point-at-eol))
+                       with prev-point     = (pos-bol)
+                       with prev-string    = (buffer-substring-no-properties prev-point (pos-eol))
                        with prev-level     = (get-current-level prev-string)
-                       with curr-end       = (point-at-eol)
+                       with curr-end       = (pos-eol)
                        until (eobp)
                        do (forward-line 1)
-                       for point  = (point-at-bol)
-                       for string = (buffer-substring-no-properties point (point-at-eol))
+                       for point  = (pos-bol)
+                       for string = (buffer-substring-no-properties point (pos-eol))
                        for level  = (get-current-level string)
                        if (or (string-match (rx (not blank)) string)
-                              (= (point-at-eol) (point-max)))
+                              (= (pos-eol) (point-max)))
                        do (progn
                             (cond ((> level prev-level)
                                    (push `(:level ,prev-level :string ,prev-string :point ,prev-point) open-positions))
@@ -360,7 +363,7 @@
                             (setq prev-point  point)
                             (setq prev-string string)
                             (setq prev-level  level)
-                            (setq curr-end    (point-at-eol)))
+                            (setq curr-end    (pos-eol)))
                        finally return nodes)))))
 
 (defun yaol-validate-node-fold-lines (node)
@@ -612,9 +615,7 @@
                                   :body (plist-get c :body)
                                   :child-head (or (plist-get c :child-head) 0)
                                   :child-body (or (plist-get c :child-body) 0))))
-    (yaol-update-overlay-display beg end)
-    (when (window-live-p (get-buffer-window))
-      (recenter -1))))
+    (yaol-update-overlay-display beg end)))
 
 (defun yaol-folded-at? (point)
   (> (length (yaol-overlays-in point point)) 0))
