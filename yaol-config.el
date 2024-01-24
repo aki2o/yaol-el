@@ -48,23 +48,23 @@
   (define-sequential-command yaol-config-toggle-current
                              yaol-fold-clear-current
                              yaol-fold-current)
-
-  (owdriver-define-command yaol-config-cycle-heads)
-  (owdriver-define-command yaol-config-cycle-current-heads)
-  (owdriver-define-command yaol-config-toggle-current)
-  (owdriver-define-command yaol-fold-clear-all)
-  (owdriver-define-command yaol-up-head)
-  (owdriver-define-command yaol-next-sibling-head)
-  (owdriver-define-command yaol-previous-sibling-head)
-  (owdriver-define-command yaol-down-head)
-  (owdriver-define-command scroll-up-command)
-  (owdriver-define-command scroll-down-command)
-
-  (add-to-list 'owdriver-keep-driving-commands 'yaol-config-cycle-heads t)
-  (add-to-list 'owdriver-keep-driving-commands 'yaol-config-cycle-current-heads t)
-  (add-to-list 'owdriver-keep-driving-commands 'yaol-config-toggle-current t)
-  (add-to-list 'owdriver-keep-driving-command-prefixes "yaol-" t)
   )
+
+(owdriver-define-command yaol-config-cycle-heads)
+(owdriver-define-command yaol-config-cycle-current-heads)
+(owdriver-define-command yaol-config-toggle-current)
+(owdriver-define-command yaol-fold-clear-all)
+(owdriver-define-command yaol-up-head)
+(owdriver-define-command yaol-next-sibling-head)
+(owdriver-define-command yaol-previous-sibling-head)
+(owdriver-define-command yaol-down-head)
+(owdriver-define-command scroll-up-command)
+(owdriver-define-command scroll-down-command)
+
+(add-to-list 'owdriver-keep-driving-commands 'yaol-config-cycle-heads t)
+(add-to-list 'owdriver-keep-driving-commands 'yaol-config-cycle-current-heads t)
+(add-to-list 'owdriver-keep-driving-commands 'yaol-config-toggle-current t)
+(add-to-list 'owdriver-keep-driving-command-prefixes "yaol-" t)
 
 ;;;###autoload
 (defun yaol-config-hydra/body () (interactive))
