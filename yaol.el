@@ -739,7 +739,7 @@
 ;;;###autoload
 (defun yaol-fold-current ()
   (interactive)
-  (yaol-update-display (yaol-find-deepest-nodes-at (point))))
+  (yaol-update-display (yaol-find-deepest-nodes-at (point)) '(:head t)))
 
 ;;;###autoload
 (defun yaol-fold-in-all-descendant-heads ()
