@@ -35,15 +35,15 @@
 
 (with-no-warnings
   (define-sequential-command yaol-config-cycle-heads
-                             yaol-fold-in-all-heads
-                             yaol-fold-in-popular-heads
-                             yaol-fold-in-popular-level-heads)
+                             yaol-fold-major-heads
+                             yaol-config-fold-major-heads-1
+                             yaol-config-fold-major-heads-2
+                             yaol-fold-root-heads)
 
   (define-sequential-command yaol-config-cycle-current-heads
-                             yaol-fold-in-all-descendant-heads
-                             yaol-fold-in-popular-descendant-heads
-                             yaol-fold-in-child-heads
-                             yaol-fold-in-child-heads-without-body)
+                             yaol-fold-all-descendant-heads
+                             yaol-fold-major-descendant-heads
+                             yaol-fold-child-heads)
 
   (define-sequential-command yaol-config-toggle-current
                              yaol-fold-clear-current
@@ -65,6 +65,16 @@
 (add-to-list 'owdriver-keep-driving-commands 'yaol-config-cycle-current-heads t)
 (add-to-list 'owdriver-keep-driving-commands 'yaol-config-toggle-current t)
 (add-to-list 'owdriver-keep-driving-command-prefixes "yaol-" t)
+
+;;;###autoload
+(defun yaol-config-fold-major-heads-1 ()
+  (interactive)
+  (yaol-fold-major-heads :level -1))
+
+;;;###autoload
+(defun yaol-config-fold-major-heads-2 ()
+  (interactive)
+  (yaol-fold-major-heads :level -2))
 
 ;;;###autoload
 (defun yaol-config-hydra/body () (interactive))

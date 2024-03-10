@@ -192,36 +192,48 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Popular Head Regexp
+;; Major Head Regexp
 
 ;;;###autoload
-(defvar yaol-go-popular-head-regexp
+(defvar yaol-go-major-head-regexp
   (rx bos (* space) (or "func" "type") space))
 
 ;;;###autoload
-(defvar yaol-perl-popular-head-regexp
+(defvar yaol-perl-major-head-regexp
   (rx bos (* space) (or "sub" "struct") space))
 
 ;;;###autoload
-(defvar yaol-ruby-popular-head-regexp
+(defvar yaol-ruby-major-head-regexp
   (rx bos (* space)
       (or (or "class" "module" "def"
               "resources" "resource" "scope" "namespace")
-          (and (? "RSpec.") (or "describe" "context" "shared_examples_for" "shared_context"))
+          (and (? "RSpec.") (or "describe" "context" "xdescribe" "xcontext" "shared_examples_for" "shared_context"))
           (and (+ (any "a-zA-Z0-9:")) ".routes.draw"))
       space))
 
 ;;;###autoload
-(defvar yaol-ts-popular-head-regexp
+(defvar yaol-ruby-minor-head-regexp
   (rx bos (* space)
-      (or (and (? "export" (+ space)) (or "class" "interface" "type" "enum"))
-          (and (? (or "public" "private" "protected") (+ space)) (? "static" (+ space)) (or "async" "function" "async function"))
-          (or "constructor"
-              "describe" "context" "test" "it" "beforeAll" "beforeEach" "afterAll" "afterEach"))
+      (or "it" "before" "after")
       space))
 
 ;;;###autoload
-(defvar yaol-slim-popular-head-regexp
+(defvar yaol-ts-major-head-regexp
+  (rx bos (* space)
+      (or (and (or (and (? "export" (+ space)) (or "class" "interface" "type" "enum"))
+                   (and (? (or "public" "private" "protected") (+ space)) (? "static" (+ space)) (or "async" "function" "async function")))
+               space)
+          (and (or "constructor" "describe" "context" "xdescribe" "xcontext")
+               "("))))
+
+;;;###autoload
+(defvar yaol-ts-minor-head-regexp
+  (rx bos (* space)
+      (or "test" "it" "xtest" "xit" "beforeAll" "beforeEach" "afterAll" "afterEach")
+      "("))
+
+;;;###autoload
+(defvar yaol-slim-major-head-regexp
   (rx bos (* space)
       (or (and (or "html" "head" "body" "table" "thead" "tbody" "ul" "ol" "dl" "form") eow) ; major html tag
           (and "-" (+ not-newline) " do ")                                                  ; maybo loop
